@@ -42,6 +42,7 @@ class SecurityConfig(
                     .requestMatchers("/api/images/**").permitAll()
                     .requestMatchers("/api/posts/**").hasRole("ADMIN")
                     .requestMatchers("/api/upload").hasRole("ADMIN")
+                    .requestMatchers("/api/upload/**").hasRole("ADMIN")
                     .requestMatchers("/api/access-logs/**").hasRole("ADMIN")
                     .anyRequest().permitAll()
             }

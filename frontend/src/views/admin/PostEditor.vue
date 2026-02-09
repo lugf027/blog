@@ -111,10 +111,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { blogApi, type BlogPost } from '@/api/blog'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
@@ -123,6 +123,7 @@ const router = useRouter()
 const route = useRoute()
 const editorRef = ref()
 const saving = ref(false)
+const uploadingImages = ref(false)  // 是否正在上传图片
 
 const form = ref<BlogPost>({
   title: '',
@@ -260,6 +261,407 @@ const handleContentChange = () => {
   }
 }
 
+// ============== 图片链接检测和替换功能 ==============
+
+/**
+ * 匹配 Markdown 中的图片链接
+ * 支持格式: ![alt](url) 和 <img src="url">
+ */
+const extractImageUrls = (text: string): string[] => {
+  const urls: string[] = []
+  
+  // 匹配 Markdown 图片语法: ![alt](url)
+  const markdownImageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g
+  let match
+  while ((match = markdownImageRegex.exec(text)) !== null) {
+    const url = match[2].trim()
+    if (isExternalImageUrl(url)) {
+      urls.push(url)
+    }
+  }
+  
+  // 匹配 HTML img 标签: <img src="url">
+  const htmlImageRegex = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi
+  while ((match = htmlImageRegex.exec(text)) !== null) {
+    const url = match[1].trim()
+    if (isExternalImageUrl(url)) {
+      urls.push(url)
+    }
+  }
+  
+  // 匹配纯图片 URL (常见图片扩展名)
+  const pureUrlRegex = /https?:\/\/[^\s<>"']+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>"']*)?/gi
+  while ((match = pureUrlRegex.exec(text)) !== null) {
+    const url = match[0]
+    // 避免重复添加已经在 Markdown 或 HTML 标签中的 URL
+    if (isExternalImageUrl(url) && !urls.includes(url)) {
+      urls.push(url)
+    }
+  }
+  
+  // 去重
+  return [...new Set(urls)]
+}
+
+/**
+ * 判断是否为外部图片链接 (非本站图片)
+ */
+const isExternalImageUrl = (url: string): boolean => {
+  if (!url) return false
+  
+  // 排除本站的图片链接（支持相对路径和绝对路径）
+  if (url.startsWith('/api/images/')) return false
+  if (url.includes('/api/images/')) return false  // 本站完整 URL
+  if (url.startsWith('data:')) return false  // 排除 base64
+  
+  // 检查是否为 http/https URL
+  return url.startsWith('http://') || url.startsWith('https://')
+}
+
+/**
+ * 替换文本中的图片 URL
+ */
+const replaceImageUrls = (text: string, mappings: Record<string, string>): string => {
+  let result = text
+  
+  for (const [oldUrl, newUrl] of Object.entries(mappings)) {
+    if (oldUrl !== newUrl) {  // 只替换成功上传的图片
+      // 全局替换，包括在 Markdown 和 HTML 标签中
+      result = result.split(oldUrl).join(newUrl)
+    }
+  }
+  
+  return result
+}
+
+/**
+ * 前端下载图片并上传到服务器
+ * 用于后端下载失败时的降级方案
+ */
+const downloadAndUploadImage = async (url: string): Promise<string | null> => {
+  try {
+    // 使用 fetch 在前端下载图片
+    const response = await fetch(url, {
+      mode: 'cors',
+      credentials: 'include'  // 携带 cookie，支持需要登录的网站
+    })
+    
+    if (!response.ok) {
+      console.warn(`前端下载图片失败: ${url}, status: ${response.status}`)
+      return null
+    }
+    
+    const blob = await response.blob()
+    
+    // 检查是否为图片
+    if (!blob.type.startsWith('image/')) {
+      console.warn(`下载的内容不是图片: ${url}, type: ${blob.type}`)
+      return null
+    }
+    
+    // 检查大小限制
+    if (blob.size > 10 * 1024 * 1024) {
+      console.warn(`图片大小超过限制: ${url}, size: ${blob.size}`)
+      return null
+    }
+    
+    // 根据 Content-Type 确定文件扩展名
+    const extensionMap: Record<string, string> = {
+      'image/jpeg': '.jpg',
+      'image/jpg': '.jpg',
+      'image/png': '.png',
+      'image/gif': '.gif',
+      'image/webp': '.webp'
+    }
+    const extension = extensionMap[blob.type] || '.jpg'
+    
+    // 创建 File 对象
+    const filename = `image_${Date.now()}${extension}`
+    const file = new File([blob], filename, { type: blob.type })
+    
+    // 上传到服务器
+    const { data } = await blogApi.uploadImage(file)
+    
+    if (data.success) {
+      return data.url
+    }
+    
+    return null
+  } catch (error) {
+    console.warn(`前端下载并上传图片失败: ${url}`, error)
+    return null
+  }
+}
+
+/**
+ * 批量在前端下载并上传图片
+ */
+const downloadAndUploadImages = async (urls: string[]): Promise<Record<string, string>> => {
+  const mappings: Record<string, string> = {}
+  
+  // 并发下载，但限制同时进行的数量
+  const concurrencyLimit = 3
+  const chunks: string[][] = []
+  for (let i = 0; i < urls.length; i += concurrencyLimit) {
+    chunks.push(urls.slice(i, i + concurrencyLimit))
+  }
+  
+  for (const chunk of chunks) {
+    const results = await Promise.all(
+      chunk.map(async (url) => {
+        const newUrl = await downloadAndUploadImage(url)
+        return { url, newUrl }
+      })
+    )
+    
+    for (const { url, newUrl } of results) {
+      mappings[url] = newUrl || url  // 失败时保留原 URL
+    }
+  }
+  
+  return mappings
+}
+
+/**
+ * 从剪切板获取图片文件
+ */
+const getImageFilesFromClipboard = (clipboardData: DataTransfer | null): File[] => {
+  if (!clipboardData) return []
+  
+  const files: File[] = []
+  const items = clipboardData.items
+  
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    // 检查是否为图片类型
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) {
+        files.push(file)
+      }
+    }
+  }
+  
+  return files
+}
+
+/**
+ * 上传剪切板中的图片文件并插入到编辑器
+ */
+const uploadClipboardImages = async (files: File[]): Promise<void> => {
+  if (files.length === 0) return
+  
+  uploadingImages.value = true
+  
+  ElNotification({
+    title: '检测到剪切板图片',
+    message: `正在上传 ${files.length} 张图片...`,
+    type: 'info',
+    duration: 3000
+  })
+  
+  const textarea = editorRef.value?.textarea
+  const cursorPosition = textarea?.selectionStart ?? form.value.content.length
+  
+  let successCount = 0
+  let insertedMarkdown = ''
+  
+  // 并发上传，但限制同时进行的数量
+  const concurrencyLimit = 3
+  const chunks: File[][] = []
+  for (let i = 0; i < files.length; i += concurrencyLimit) {
+    chunks.push(files.slice(i, i + concurrencyLimit))
+  }
+  
+  for (const chunk of chunks) {
+    const results = await Promise.all(
+      chunk.map(async (file) => {
+        try {
+          // 验证文件大小
+          if (file.size > 10 * 1024 * 1024) {
+            console.warn(`图片大小超过限制: ${file.name}, size: ${file.size}`)
+            return null
+          }
+          
+          const { data } = await blogApi.uploadImage(file)
+          if (data.success) {
+            return data.url
+          }
+          return null
+        } catch (error) {
+          console.warn(`上传图片失败: ${file.name}`, error)
+          return null
+        }
+      })
+    )
+    
+    for (const url of results) {
+      if (url) {
+        successCount++
+        // 根据索引生成图片描述
+        const imageDesc = files.length > 1 ? `图片${successCount}` : '图片'
+        insertedMarkdown += `![${imageDesc}](${url})\n`
+      }
+    }
+  }
+  
+  uploadingImages.value = false
+  
+  if (insertedMarkdown) {
+    // 在光标位置插入图片 Markdown
+    form.value.content = 
+      form.value.content.substring(0, cursorPosition) +
+      insertedMarkdown +
+      form.value.content.substring(cursorPosition)
+    
+    // 移动光标到插入内容之后
+    setTimeout(() => {
+      if (textarea) {
+        textarea.focus()
+        const newPos = cursorPosition + insertedMarkdown.length
+        textarea.setSelectionRange(newPos, newPos)
+      }
+    }, 0)
+    
+    ElNotification({
+      title: '图片上传完成',
+      message: `成功上传 ${successCount}/${files.length} 张图片`,
+      type: successCount === files.length ? 'success' : 'warning',
+      duration: 3000
+    })
+  } else {
+    ElNotification({
+      title: '图片上传失败',
+      message: '所有图片上传均失败，请重试',
+      type: 'error',
+      duration: 3000
+    })
+  }
+}
+
+/**
+ * 处理粘贴事件 - 支持剪切板图片和外部图片链接
+ */
+const handlePaste = async (event: ClipboardEvent) => {
+  const clipboardData = event.clipboardData
+  
+  // 优先处理剪切板中的图片文件（如截图）
+  const imageFiles = getImageFilesFromClipboard(clipboardData)
+  
+  if (imageFiles.length > 0) {
+    // 阻止默认粘贴行为，避免浏览器插入图片的 base64 或其他默认处理
+    event.preventDefault()
+    
+    // 上传剪切板图片
+    await uploadClipboardImages(imageFiles)
+    return
+  }
+  
+  // 如果没有图片文件，处理文本中的外部图片链接
+  const pastedText = clipboardData?.getData('text/plain')
+  if (!pastedText) return
+  
+  // 提取外部图片链接
+  const imageUrls = extractImageUrls(pastedText)
+  
+  if (imageUrls.length === 0) return
+  
+  // 显示检测到的图片数量提示
+  ElNotification({
+    title: '检测到外部图片',
+    message: `正在上传 ${imageUrls.length} 张图片到服务器...`,
+    type: 'info',
+    duration: 3000
+  })
+  
+  uploadingImages.value = true
+  
+  try {
+    // 第一步：尝试后端批量上传
+    const { data } = await blogApi.uploadImagesFromUrls(imageUrls)
+    
+    let finalMappings: Record<string, string> = {}
+    let failedUrls: string[] = []
+    
+    if (data.success && data.mappings) {
+      finalMappings = { ...data.mappings }
+      failedUrls = data.failed || []
+    }
+    
+    // 第二步：如果有后端下载失败的，尝试前端下载
+    if (failedUrls.length > 0) {
+      ElNotification({
+        title: '部分图片后端下载失败',
+        message: `正在尝试前端下载 ${failedUrls.length} 张图片...`,
+        type: 'warning',
+        duration: 3000
+      })
+      
+      const frontendMappings = await downloadAndUploadImages(failedUrls)
+      
+      // 合并前端上传的结果
+      for (const [url, newUrl] of Object.entries(frontendMappings)) {
+        if (newUrl !== url) {
+          finalMappings[url] = newUrl
+        }
+      }
+    }
+    
+    // 等待粘贴操作完成
+    await new Promise(resolve => setTimeout(resolve, 50))
+    
+    // 获取粘贴后的内容
+    const currentContent = form.value.content
+    
+    // 替换图片链接
+    const updatedContent = replaceImageUrls(currentContent, finalMappings)
+    
+    if (updatedContent !== currentContent) {
+      form.value.content = updatedContent
+      
+      // 统计成功上传的数量
+      const uploadedCount = Object.entries(finalMappings).filter(([k, v]) => k !== v).length
+      
+      ElNotification({
+        title: '图片上传完成',
+        message: `成功上传 ${uploadedCount}/${imageUrls.length} 张图片`,
+        type: uploadedCount === imageUrls.length ? 'success' : 'warning',
+        duration: 3000
+      })
+    }
+  } catch (error: any) {
+    console.error('图片上传失败:', error)
+    ElNotification({
+      title: '图片上传失败',
+      message: error.response?.data?.message || '部分图片可能未能成功上传',
+      type: 'warning',
+      duration: 5000
+    })
+  } finally {
+    uploadingImages.value = false
+  }
+}
+
+/**
+ * 设置粘贴事件监听
+ */
+const setupPasteListener = () => {
+  const textarea = editorRef.value?.textarea
+  if (textarea) {
+    textarea.addEventListener('paste', handlePaste)
+  }
+}
+
+/**
+ * 移除粘贴事件监听
+ */
+const removePasteListener = () => {
+  const textarea = editorRef.value?.textarea
+  if (textarea) {
+    textarea.removeEventListener('paste', handlePaste)
+  }
+}
+
 const savePost = async () => {
   if (!form.value.title || !form.value.content) {
     ElMessage.warning('请填写标题和内容')
@@ -320,6 +722,14 @@ onMounted(() => {
   if (isEdit.value) {
     loadPost()
   }
+  // 延迟设置粘贴监听器，确保 DOM 已渲染
+  setTimeout(() => {
+    setupPasteListener()
+  }, 100)
+})
+
+onUnmounted(() => {
+  removePasteListener()
 })
 </script>
 

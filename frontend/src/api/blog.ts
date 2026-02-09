@@ -208,5 +208,21 @@ export const blogApi = {
         'Content-Type': 'multipart/form-data'
       }
     })
+  },
+
+  // Upload image from URL (download remote image and save to our server)
+  uploadImageFromUrl(url: string) {
+    return api.post<{ success: boolean; url: string; id: number; originalUrl: string }>('/upload/from-url', { url })
+  },
+
+  // Upload multiple images from URLs
+  uploadImagesFromUrls(urls: string[]) {
+    return api.post<{ 
+      success: boolean; 
+      mappings: Record<string, string>;  // 原URL -> 新URL 的映射
+      failed: string[];  // 后端下载失败的 URL 列表
+      total: number;
+      uploaded: number;
+    }>('/upload/from-urls', { urls })
   }
 }
