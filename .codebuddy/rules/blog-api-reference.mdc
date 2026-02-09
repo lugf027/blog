@@ -1,0 +1,318 @@
+---
+description: 博客项目 API 接口参考文档，包含所有后端 API 的详细说明。当需要了解或调用特定 API 时使用。
+alwaysApply: false
+enabled: true
+updatedAt: 2026-02-09T08:27:01.322Z
+provider: 
+---
+
+# 博客项目 API 接口参考
+
+## 基础信息
+
+- **Base URL**: `http://localhost:8080/api`
+- **认证方式**: JWT Bearer Token
+- **请求头**: `Authorization: Bearer <token>`
+
+## 认证模块 (`/api/auth`)
+
+### 用户登录
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "username": "string",
+  "password": "string"
+}
+```
+
+**响应**:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "username": "admin",
+  "nickname": "管理员"
+}
+```
+
+### 用户注册
+
+```http
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "username": "string",
+  "password": "string",
+  "nickname": "string",
+  "email": "string"
+}
+```
+
+### Token 验证
+
+```http
+POST /api/auth/validate
+Authorization: Bearer <token>
+```
+
+**响应**:
+```json
+{
+  "valid": true,
+  "username": "admin"
+}
+```
+
+---
+
+## 博客文章模块 (`/api/posts`)
+
+### 获取所有文章 (需要 ADMIN 权限)
+
+```http
+GET /api/posts?page=0&size=10
+Authorization: Bearer <token>
+```
+
+**响应**:
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "title": "文章标题",
+      "content": "文章内容...",
+      "summary": "文章摘要",
+      "coverImage": "/api/images/cover.jpg",
+      "author": "作者",
+      "status": "published",
+      "viewCount": 100,
+      "createdAt": "2024-01-01T12:00:00",
+      "updatedAt": "2024-01-02T12:00:00",
+      "publishedAt": "2024-01-01T14:00:00"
+    }
+  ],
+  "totalElements": 50,
+  "totalPages": 5,
+  "number": 0,
+  "size": 10
+}
+```
+
+### 获取已发布文章 (公开)
+
+```http
+GET /api/posts/published?page=0&size=10
+```
+
+### 获取文章详情 (需要 ADMIN 权限)
+
+```http
+GET /api/posts/{id}
+Authorization: Bearer <token>
+```
+
+### 查看文章 (公开，自动增加浏览量)
+
+```http
+GET /api/posts/{id}/view
+```
+
+### 创建文章 (需要 ADMIN 权限)
+
+```http
+POST /api/posts
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "文章标题",
+  "content": "文章内容 (支持 Markdown)",
+  "summary": "文章摘要",
+  "coverImage": "/api/images/cover.jpg",
+  "author": "作者名",
+  "status": "draft"  // draft 或 published
+}
+```
+
+### 更新文章 (需要 ADMIN 权限)
+
+```http
+PUT /api/posts/{id}
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "更新后的标题",
+  "content": "更新后的内容",
+  "summary": "更新后的摘要",
+  "coverImage": "/api/images/new-cover.jpg",
+  "author": "作者"
+}
+```
+
+### 发布文章 (需要 ADMIN 权限)
+
+```http
+PUT /api/posts/{id}/publish
+Authorization: Bearer <token>
+```
+
+### 删除文章 (需要 ADMIN 权限)
+
+```http
+DELETE /api/posts/{id}
+Authorization: Bearer <token>
+```
+
+### 搜索文章 (需要 ADMIN 权限)
+
+```http
+GET /api/posts/search?keyword=关键词&page=0&size=10
+Authorization: Bearer <token>
+```
+
+---
+
+## 图片模块 (`/api`)
+
+### 上传图片 (需要 ADMIN 权限)
+
+```http
+POST /api/upload
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+file: <图片文件>
+```
+
+**响应**:
+```json
+{
+  "url": "/api/images/abc123.jpg",
+  "fileName": "abc123.jpg",
+  "originalName": "my-image.jpg",
+  "size": 102400
+}
+```
+
+**支持格式**: jpg, jpeg, png, gif, webp
+**大小限制**: 10MB
+
+### 获取图片 (公开)
+
+```http
+GET /api/images/{filename}
+```
+
+---
+
+## 访问日志模块 (`/api/admin/access-logs`)
+
+> 所有接口都需要 ADMIN 权限
+
+### 获取所有日志
+
+```http
+GET /api/admin/access-logs?page=0&size=20
+Authorization: Bearer <token>
+```
+
+**响应**:
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "ipAddress": "192.168.1.1",
+      "requestUrl": "/api/posts/published",
+      "requestMethod": "GET",
+      "userAgent": "Mozilla/5.0...",
+      "referer": "https://example.com",
+      "accessTime": "2024-01-01T12:00:00",
+      "responseStatus": 200,
+      "responseTime": 50
+    }
+  ],
+  "totalElements": 1000,
+  "totalPages": 50
+}
+```
+
+### 按 IP 地址筛选
+
+```http
+GET /api/admin/access-logs/by-ip?ip=192.168.1.1&page=0&size=20
+Authorization: Bearer <token>
+```
+
+### 按 URL 筛选
+
+```http
+GET /api/admin/access-logs/by-url?url=/api/posts&page=0&size=20
+Authorization: Bearer <token>
+```
+
+### 删除单条日志
+
+```http
+DELETE /api/admin/access-logs/{id}
+Authorization: Bearer <token>
+```
+
+### 清空所有日志
+
+```http
+DELETE /api/admin/access-logs/clear
+Authorization: Bearer <token>
+```
+
+---
+
+## 错误响应格式
+
+```json
+{
+  "timestamp": "2024-01-01T12:00:00",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "具体错误信息",
+  "path": "/api/posts"
+}
+```
+
+## HTTP 状态码
+
+| 状态码 | 说明 |
+|--------|------|
+| 200 | 成功 |
+| 201 | 创建成功 |
+| 400 | 请求参数错误 |
+| 401 | 未认证或 Token 过期 |
+| 403 | 权限不足 |
+| 404 | 资源不存在 |
+| 500 | 服务器内部错误 |
+
+## 前端 API 调用示例
+
+```typescript
+import { blogApi } from '@/api/blog'
+
+// 获取文章列表
+const posts = await blogApi.getPublishedPosts(0, 10)
+
+// 创建文章
+const newPost = await blogApi.createPost({
+  title: '新文章',
+  content: '# 标题\n\n内容...',
+  status: 'draft'
+})
+
+// 上传图片
+const file = event.target.files[0]
+const result = await blogApi.uploadImage(file)
+console.log('图片 URL:', result.data.url)
+```

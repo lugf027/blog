@@ -1,0 +1,281 @@
+---
+description: 博客后端开发规范，包含 Spring Boot + Kotlin 的架构模式、API 设计、安全配置等最佳实践。当需要开发后端功能、添加 API、修改实体或服务时使用。
+alwaysApply: false
+enabled: true
+updatedAt: 2026-02-09T08:26:12.914Z
+provider: 
+---
+
+# 博客后端开发规范 (Spring Boot + Kotlin)
+
+## 项目技术栈
+
+| 技术 | 版本 | 用途 |
+|------|------|------|
+| Kotlin | 2.2.21 | 主要开发语言 |
+| Spring Boot | 4.0.2 | 后端框架 |
+| Spring Data JPA | - | ORM 数据访问 |
+| Spring Security | - | 安全认证 |
+| MySQL | - | 数据库 |
+| JWT (jjwt) | 0.12.3 | Token 认证 |
+| Java | 21 | 运行环境 |
+
+## 项目架构
+
+```
+src/main/kotlin/io/github/lugf027/blog/
+├── BlogApplication.kt          # 启动类
+├── config/                     # 配置层
+│   ├── SecurityConfig.kt       # Spring Security 配置
+│   └── WebConfig.kt            # Web 配置 (CORS + 拦截器)
+├── controller/                 # 控制器层 (REST API)
+├── service/                    # 服务层 (业务逻辑)
+├── repository/                 # 数据访问层 (JPA Repository)
+├── entity/                     # 实体类 (数据模型)
+├── security/                   # 安全相关
+├── interceptor/                # 拦截器
+└── util/                       # 工具类
+```
+
+## 开发规范
+
+### 1. 实体类 (Entity)
+
+创建新实体时遵循以下模板：
+
+```kotlin
+package io.github.lugf027.blog.entity
+
+import jakarta.persistence.*
+import java.time.LocalDateTime
+
+@Entity
+@Table(name = "table_name")
+data class EntityName(
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    var id: Long? = null,
+    
+    @Column(nullable = false)
+    var fieldName: String,
+    
+    @Column(columnDefinition = "TEXT")
+    var longTextField: String? = null,
+    
+    @Column(name = "created_at")
+    var createdAt: LocalDateTime? = null,
+    
+    @Column(name = "updated_at")
+    var updatedAt: LocalDateTime? = null
+) {
+    @PrePersist
+    fun prePersist() {
+        createdAt = LocalDateTime.now()
+        updatedAt = LocalDateTime.now()
+    }
+    
+    @PreUpdate
+    fun preUpdate() {
+        updatedAt = LocalDateTime.now()
+    }
+}
+```
+
+### 2. Repository 接口
+
+```kotlin
+package io.github.lugf027.blog.repository
+
+import io.github.lugf027.blog.entity.EntityName
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.stereotype.Repository
+
+@Repository
+interface EntityNameRepository : JpaRepository<EntityName, Long> {
+    // 自定义查询方法
+    fun findByStatus(status: String, pageable: Pageable): Page<EntityName>
+    
+    // 模糊搜索
+    fun findByTitleContaining(keyword: String, pageable: Pageable): Page<EntityName>
+}
+```
+
+### 3. Service 服务层
+
+```kotlin
+package io.github.lugf027.blog.service
+
+import io.github.lugf027.blog.entity.EntityName
+import io.github.lugf027.blog.repository.EntityNameRepository
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class EntityNameService(
+    private val repository: EntityNameRepository
+) {
+    fun findAll(page: Int, size: Int): Page<EntityName> {
+        val pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"))
+        return repository.findAll(pageable)
+    }
+    
+    fun findById(id: Long): EntityName? {
+        return repository.findById(id).orElse(null)
+    }
+    
+    @Transactional
+    fun create(entity: EntityName): EntityName {
+        return repository.save(entity)
+    }
+    
+    @Transactional
+    fun update(id: Long, entity: EntityName): EntityName? {
+        val existing = repository.findById(id).orElse(null) ?: return null
+        // 更新字段
+        existing.fieldName = entity.fieldName
+        return repository.save(existing)
+    }
+    
+    @Transactional
+    fun delete(id: Long): Boolean {
+        if (!repository.existsById(id)) return false
+        repository.deleteById(id)
+        return true
+    }
+}
+```
+
+### 4. Controller 控制器
+
+```kotlin
+package io.github.lugf027.blog.controller
+
+import io.github.lugf027.blog.entity.EntityName
+import io.github.lugf027.blog.service.EntityNameService
+import org.springframework.http.ResponseEntity
+import org.springframework.security.access.prepost.PreAuthorize
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/api/entities")
+class EntityNameController(
+    private val service: EntityNameService
+) {
+    @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    fun getAll(
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "10") size: Int
+    ): ResponseEntity<*> {
+        return ResponseEntity.ok(service.findAll(page, size))
+    }
+    
+    @GetMapping("/{id}")
+    fun getById(@PathVariable id: Long): ResponseEntity<*> {
+        val entity = service.findById(id)
+            ?: return ResponseEntity.notFound().build<Unit>()
+        return ResponseEntity.ok(entity)
+    }
+    
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    fun create(@RequestBody entity: EntityName): ResponseEntity<*> {
+        return ResponseEntity.ok(service.create(entity))
+    }
+    
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun update(
+        @PathVariable id: Long,
+        @RequestBody entity: EntityName
+    ): ResponseEntity<*> {
+        val updated = service.update(id, entity)
+            ?: return ResponseEntity.notFound().build<Unit>()
+        return ResponseEntity.ok(updated)
+    }
+    
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun delete(@PathVariable id: Long): ResponseEntity<*> {
+        return if (service.delete(id)) {
+            ResponseEntity.ok(mapOf("message" to "删除成功"))
+        } else {
+            ResponseEntity.notFound().build<Unit>()
+        }
+    }
+}
+```
+
+## 安全配置
+
+### API 权限控制
+
+在 `SecurityConfig.kt` 中配置路由权限：
+
+```kotlin
+.authorizeHttpRequests { auth ->
+    auth
+        // 公开接口
+        .requestMatchers("/api/auth/**").permitAll()
+        .requestMatchers("/api/posts/published").permitAll()
+        .requestMatchers("/api/posts/*/view").permitAll()
+        .requestMatchers("/api/images/**").permitAll()
+        
+        // 需要 ADMIN 角色的接口
+        .requestMatchers("/api/posts/**").hasRole("ADMIN")
+        .requestMatchers("/api/upload").hasRole("ADMIN")
+        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+        
+        .anyRequest().permitAll()
+}
+```
+
+### JWT Token
+
+- 使用 `JwtUtil` 生成和验证 Token
+- Token 有效期: 24 小时
+- 存储在请求头: `Authorization: Bearer <token>`
+
+## 数据库配置
+
+配置文件: `src/main/resources/application.yaml`
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:mysql://host:port/database
+    username: root
+    password: password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update  # 开发环境自动更新表结构
+    show-sql: true
+```
+
+## 常用命令
+
+```bash
+# 启动后端服务
+./gradlew bootRun
+
+# 构建项目
+./gradlew build
+
+# 运行测试
+./gradlew test
+```
+
+## 现有 API 端点
+
+| 模块 | 路径 | 说明 |
+|------|------|------|
+| 认证 | `/api/auth/**` | 登录、注册、Token验证 |
+| 博客文章 | `/api/posts/**` | 文章 CRUD、发布、搜索 |
+| 图片 | `/api/upload`, `/api/images/**` | 图片上传和获取 |
+| 访问日志 | `/api/admin/access-logs/**` | 日志查询和管理 |

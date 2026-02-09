@@ -1,0 +1,516 @@
+---
+description: 博客项目新功能开发指南，提供完整的端到端功能开发流程，包括后端 API 和前端页面的开发步骤。当需要为博客添加新功能时使用。
+alwaysApply: false
+enabled: true
+updatedAt: 2026-02-09T08:27:42.200Z
+provider: 
+---
+
+# 博客项目新功能开发指南
+
+本指南提供完整的端到端功能开发流程，帮助你快速为博客添加新功能。
+
+## 开发流程概览
+
+```
+1. 需求分析 → 2. 数据库设计 → 3. 后端开发 → 4. 前端开发 → 5. 测试验证
+```
+
+## 示例：添加「评论功能」
+
+### 步骤 1: 数据库设计 (实体类)
+
+**文件**: `src/main/kotlin/io/github/lugf027/blog/entity/Comment.kt`
+
+```kotlin
+package io.github.lugf027.blog.entity
+
+import jakarta.persistence.*
+import java.time.LocalDateTime
+
+@Entity
+@Table(name = "comment")
+data class Comment(
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    var id: Long? = null,
+    
+    @Column(name = "post_id", nullable = false)
+    var postId: Long,
+    
+    @Column(nullable = false)
+    var author: String,
+    
+    var email: String? = null,
+    
+    @Column(columnDefinition = "TEXT", nullable = false)
+    var content: String,
+    
+    @Column(name = "parent_id")
+    var parentId: Long? = null,  // 支持回复
+    
+    @Column(nullable = false)
+    var status: String = "pending",  // pending, approved, rejected
+    
+    @Column(name = "ip_address")
+    var ipAddress: String? = null,
+    
+    @Column(name = "created_at")
+    var createdAt: LocalDateTime? = null
+) {
+    @PrePersist
+    fun prePersist() {
+        createdAt = LocalDateTime.now()
+    }
+}
+```
+
+### 步骤 2: Repository 接口
+
+**文件**: `src/main/kotlin/io/github/lugf027/blog/repository/CommentRepository.kt`
+
+```kotlin
+package io.github.lugf027.blog.repository
+
+import io.github.lugf027.blog.entity.Comment
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.stereotype.Repository
+
+@Repository
+interface CommentRepository : JpaRepository<Comment, Long> {
+    // 获取文章的已审核评论
+    fun findByPostIdAndStatus(postId: Long, status: String, pageable: Pageable): Page<Comment>
+    
+    // 获取所有待审核评论
+    fun findByStatus(status: String, pageable: Pageable): Page<Comment>
+    
+    // 统计文章评论数
+    fun countByPostIdAndStatus(postId: Long, status: String): Long
+}
+```
+
+### 步骤 3: Service 服务层
+
+**文件**: `src/main/kotlin/io/github/lugf027/blog/service/CommentService.kt`
+
+```kotlin
+package io.github.lugf027.blog.service
+
+import io.github.lugf027.blog.entity.Comment
+import io.github.lugf027.blog.repository.CommentRepository
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class CommentService(
+    private val commentRepository: CommentRepository
+) {
+    // 获取文章的已审核评论
+    fun getApprovedComments(postId: Long, page: Int, size: Int): Page<Comment> {
+        val pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"))
+        return commentRepository.findByPostIdAndStatus(postId, "approved", pageable)
+    }
+    
+    // 获取待审核评论 (管理员)
+    fun getPendingComments(page: Int, size: Int): Page<Comment> {
+        val pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"))
+        return commentRepository.findByStatus("pending", pageable)
+    }
+    
+    // 提交评论
+    @Transactional
+    fun createComment(comment: Comment): Comment {
+        comment.status = "pending"  // 默认待审核
+        return commentRepository.save(comment)
+    }
+    
+    // 审核评论
+    @Transactional
+    fun approveComment(id: Long): Comment? {
+        val comment = commentRepository.findById(id).orElse(null) ?: return null
+        comment.status = "approved"
+        return commentRepository.save(comment)
+    }
+    
+    // 拒绝评论
+    @Transactional
+    fun rejectComment(id: Long): Comment? {
+        val comment = commentRepository.findById(id).orElse(null) ?: return null
+        comment.status = "rejected"
+        return commentRepository.save(comment)
+    }
+    
+    // 删除评论
+    @Transactional
+    fun deleteComment(id: Long): Boolean {
+        if (!commentRepository.existsById(id)) return false
+        commentRepository.deleteById(id)
+        return true
+    }
+    
+    // 获取评论数
+    fun getCommentCount(postId: Long): Long {
+        return commentRepository.countByPostIdAndStatus(postId, "approved")
+    }
+}
+```
+
+### 步骤 4: Controller 控制器
+
+**文件**: `src/main/kotlin/io/github/lugf027/blog/controller/CommentController.kt`
+
+```kotlin
+package io.github.lugf027.blog.controller
+
+import io.github.lugf027.blog.entity.Comment
+import io.github.lugf027.blog.service.CommentService
+import jakarta.servlet.http.HttpServletRequest
+import org.springframework.http.ResponseEntity
+import org.springframework.security.access.prepost.PreAuthorize
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/api/comments")
+class CommentController(
+    private val commentService: CommentService
+) {
+    // 获取文章评论 (公开)
+    @GetMapping("/post/{postId}")
+    fun getPostComments(
+        @PathVariable postId: Long,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") size: Int
+    ): ResponseEntity<*> {
+        return ResponseEntity.ok(commentService.getApprovedComments(postId, page, size))
+    }
+    
+    // 提交评论 (公开)
+    @PostMapping
+    fun createComment(
+        @RequestBody comment: Comment,
+        request: HttpServletRequest
+    ): ResponseEntity<*> {
+        comment.ipAddress = request.remoteAddr
+        val saved = commentService.createComment(comment)
+        return ResponseEntity.ok(mapOf(
+            "message" to "评论已提交，等待审核",
+            "comment" to saved
+        ))
+    }
+    
+    // 获取待审核评论 (管理员)
+    @GetMapping("/pending")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun getPendingComments(
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") size: Int
+    ): ResponseEntity<*> {
+        return ResponseEntity.ok(commentService.getPendingComments(page, size))
+    }
+    
+    // 审核通过 (管理员)
+    @PutMapping("/{id}/approve")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun approveComment(@PathVariable id: Long): ResponseEntity<*> {
+        val comment = commentService.approveComment(id)
+            ?: return ResponseEntity.notFound().build<Unit>()
+        return ResponseEntity.ok(comment)
+    }
+    
+    // 拒绝评论 (管理员)
+    @PutMapping("/{id}/reject")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun rejectComment(@PathVariable id: Long): ResponseEntity<*> {
+        val comment = commentService.rejectComment(id)
+            ?: return ResponseEntity.notFound().build<Unit>()
+        return ResponseEntity.ok(comment)
+    }
+    
+    // 删除评论 (管理员)
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun deleteComment(@PathVariable id: Long): ResponseEntity<*> {
+        return if (commentService.deleteComment(id)) {
+            ResponseEntity.ok(mapOf("message" to "删除成功"))
+        } else {
+            ResponseEntity.notFound().build<Unit>()
+        }
+    }
+}
+```
+
+### 步骤 5: 更新安全配置
+
+**文件**: `src/main/kotlin/io/github/lugf027/blog/config/SecurityConfig.kt`
+
+在 `authorizeHttpRequests` 中添加：
+
+```kotlin
+.requestMatchers("/api/comments/post/**").permitAll()  // 查看评论公开
+.requestMatchers(HttpMethod.POST, "/api/comments").permitAll()  // 提交评论公开
+.requestMatchers("/api/comments/**").hasRole("ADMIN")  // 评论管理需要权限
+```
+
+### 步骤 6: 前端 API 封装
+
+**文件**: `frontend/src/api/blog.ts`
+
+添加评论相关的类型和 API：
+
+```typescript
+// 评论类型
+export interface Comment {
+  id?: number
+  postId: number
+  author: string
+  email?: string
+  content: string
+  parentId?: number
+  status?: string
+  createdAt?: string
+}
+
+// 在 blogApi 对象中添加
+export const blogApi = {
+  // ... 现有方法
+  
+  // 评论相关
+  getPostComments(postId: number, page = 0, size = 20) {
+    return api.get(`/comments/post/${postId}`, { params: { page, size } })
+  },
+  
+  submitComment(comment: Comment) {
+    return api.post('/comments', comment)
+  },
+  
+  getPendingComments(page = 0, size = 20) {
+    return api.get('/comments/pending', { params: { page, size } })
+  },
+  
+  approveComment(id: number) {
+    return api.put(`/comments/${id}/approve`)
+  },
+  
+  rejectComment(id: number) {
+    return api.put(`/comments/${id}/reject`)
+  },
+  
+  deleteComment(id: number) {
+    return api.delete(`/comments/${id}`)
+  }
+}
+```
+
+### 步骤 7: 前端组件开发
+
+**文件**: `frontend/src/components/CommentSection.vue`
+
+```vue
+<template>
+  <div class="comment-section">
+    <h3>评论 ({{ total }})</h3>
+    
+    <!-- 评论表单 -->
+    <el-form :model="form" :rules="rules" ref="formRef" class="comment-form">
+      <el-form-item prop="author">
+        <el-input v-model="form.author" placeholder="昵称 *" />
+      </el-form-item>
+      <el-form-item prop="email">
+        <el-input v-model="form.email" placeholder="邮箱 (选填)" />
+      </el-form-item>
+      <el-form-item prop="content">
+        <el-input
+          v-model="form.content"
+          type="textarea"
+          :rows="4"
+          placeholder="写下你的评论..."
+        />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" @click="submitComment" :loading="submitting">
+          提交评论
+        </el-button>
+      </el-form-item>
+    </el-form>
+    
+    <!-- 评论列表 -->
+    <div class="comment-list" v-loading="loading">
+      <div v-for="comment in comments" :key="comment.id" class="comment-item">
+        <div class="comment-header">
+          <span class="author">{{ comment.author }}</span>
+          <span class="time">{{ formatTime(comment.createdAt) }}</span>
+        </div>
+        <div class="comment-content">{{ comment.content }}</div>
+      </div>
+      
+      <el-empty v-if="comments.length === 0" description="暂无评论" />
+    </div>
+    
+    <!-- 分页 -->
+    <el-pagination
+      v-if="total > pageSize"
+      :current-page="currentPage"
+      :page-size="pageSize"
+      :total="total"
+      layout="prev, pager, next"
+      @current-change="loadComments"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import { blogApi, type Comment } from '@/api/blog'
+
+const props = defineProps<{
+  postId: number
+}>()
+
+const loading = ref(false)
+const submitting = ref(false)
+const comments = ref<Comment[]>([])
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = 20
+
+const formRef = ref()
+const form = reactive({
+  author: '',
+  email: '',
+  content: ''
+})
+
+const rules = {
+  author: [{ required: true, message: '请输入昵称', trigger: 'blur' }],
+  content: [{ required: true, message: '请输入评论内容', trigger: 'blur' }]
+}
+
+onMounted(() => {
+  loadComments(1)
+})
+
+const loadComments = async (page: number) => {
+  currentPage.value = page
+  loading.value = true
+  try {
+    const res = await blogApi.getPostComments(props.postId, page - 1, pageSize)
+    comments.value = res.data.content
+    total.value = res.data.totalElements
+  } catch (error) {
+    ElMessage.error('加载评论失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const submitComment = async () => {
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) return
+  
+  submitting.value = true
+  try {
+    await blogApi.submitComment({
+      postId: props.postId,
+      author: form.author,
+      email: form.email || undefined,
+      content: form.content
+    })
+    ElMessage.success('评论已提交，等待审核')
+    form.content = ''
+  } catch (error) {
+    ElMessage.error('提交失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+const formatTime = (time?: string) => {
+  if (!time) return ''
+  return new Date(time).toLocaleString('zh-CN')
+}
+</script>
+
+<style scoped>
+.comment-section {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+}
+
+.comment-form {
+  margin-bottom: 30px;
+}
+
+.comment-item {
+  padding: 15px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.comment-header {
+  margin-bottom: 8px;
+}
+
+.author {
+  font-weight: bold;
+  margin-right: 10px;
+}
+
+.time {
+  color: #999;
+  font-size: 12px;
+}
+
+.comment-content {
+  line-height: 1.6;
+}
+</style>
+```
+
+### 步骤 8: 在文章详情页使用组件
+
+**文件**: `frontend/src/views/PostDetail.vue`
+
+```vue
+<template>
+  <div class="post-detail">
+    <!-- 文章内容 -->
+    <article>...</article>
+    
+    <!-- 添加评论组件 -->
+    <CommentSection v-if="post" :post-id="post.id" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import CommentSection from '@/components/CommentSection.vue'
+// ...
+</script>
+```
+
+## 常见功能开发清单
+
+| 功能 | 涉及文件 |
+|------|----------|
+| **标签/分类** | Entity, Repository, Service, Controller, 前端组件 |
+| **文章点赞** | 新增 Like 实体或在 BlogPost 添加字段，API，前端按钮 |
+| **搜索优化** | Repository 添加全文搜索方法，前端搜索组件 |
+| **RSS 订阅** | 新增 Controller 生成 RSS XML |
+| **邮件通知** | 添加 Spring Mail 依赖，EmailService |
+| **文章归档** | Repository 按时间分组查询，前端归档页面 |
+
+## 开发检查清单
+
+- [ ] 实体类字段完整，包含必要的审计字段
+- [ ] Repository 包含必要的查询方法
+- [ ] Service 使用 `@Transactional` 处理写操作
+- [ ] Controller 正确配置权限注解
+- [ ] SecurityConfig 添加新路由的权限规则
+- [ ] 前端 API 封装完整，包含类型定义
+- [ ] 前端组件处理 loading 和 error 状态
+- [ ] 测试 API 接口响应正确
