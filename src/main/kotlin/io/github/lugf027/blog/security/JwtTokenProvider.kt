@@ -17,12 +17,14 @@ class JwtTokenProvider {
         val now = Date()
         val expiryDate = Date(now.time + jwtExpirationMs)
 
-        return Jwts.builder()
+        val token = Jwts.builder()
             .setSubject(username)
             .setIssuedAt(now)
             .setExpiration(expiryDate)
             .signWith(jwtSecret, SignatureAlgorithm.HS512)
             .compact()
+
+        return token
     }
 
     fun getUsernameFromToken(token: String): String {

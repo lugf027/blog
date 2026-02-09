@@ -1,7 +1,7 @@
 package io.github.lugf027.blog.controller
 
+import io.github.lugf027.blog.security.JwtTokenProvider
 import io.github.lugf027.blog.service.AdminUserService
-import io.github.lugf027.blog.util.JwtUtil
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*
 @RequestMapping("/api/auth")
 class AuthController(
     private val adminUserService: AdminUserService,
-    private val jwtUtil: JwtUtil
+    private val jwtTokenProvider: JwtTokenProvider
 ) {
 
     data class LoginRequest(
@@ -36,7 +36,7 @@ class AuthController(
     fun login(@RequestBody request: LoginRequest): ResponseEntity<LoginResponse> {
         val user = adminUserService.login(request.username, request.password)
         return if (user != null) {
-            val token = jwtUtil.generateToken(user.username)
+            val token = jwtTokenProvider.generateToken(user.username)
             ResponseEntity.ok(
                 LoginResponse(
                     success = true,
@@ -90,8 +90,8 @@ class AuthController(
     @PostMapping("/validate")
     fun validateToken(@RequestHeader("Authorization") authHeader: String): ResponseEntity<Map<String, Any>> {
         val token = authHeader.removePrefix("Bearer ")
-        val isValid = jwtUtil.validateToken(token)
-        val username = if (isValid) jwtUtil.getUsernameFromToken(token) ?: "" else ""
+        val isValid = jwtTokenProvider.validateToken(token)
+        val username = if (isValid) jwtTokenProvider.getUsernameFromToken(token) else ""
 
        return ResponseEntity.ok(
             mapOf(

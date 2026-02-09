@@ -1,5 +1,7 @@
 package io.github.lugf027.blog.controller
 
+import io.github.lugf027.blog.dto.CreatePostRequest
+import io.github.lugf027.blog.dto.UpdatePostRequest
 import io.github.lugf027.blog.entity.BlogPost
 import io.github.lugf027.blog.service.BlogPostService
 import org.springframework.data.domain.Page
@@ -60,15 +62,18 @@ class BlogPostController(
     }
 
     @PostMapping
-    fun createPost(@RequestBody post: BlogPost): ResponseEntity<BlogPost> {
+    fun createPost(@RequestBody request: CreatePostRequest): ResponseEntity<BlogPost> {
+        val post = request.toEntity()
         val createdPost = blogPostService.createPost(post)
         return ResponseEntity.ok(createdPost)
     }
 
     @PutMapping("/{id}")
-    fun updatePost(@PathVariable id: Long, @RequestBody post: BlogPost): ResponseEntity<BlogPost> {
+    fun updatePost(@PathVariable id: Long, @RequestBody request: UpdatePostRequest): ResponseEntity<BlogPost> {
         return try {
-            val updatedPost = blogPostService.updatePost(id, post)
+            val existingPost = blogPostService.getPostById(id)
+                ?: return ResponseEntity.notFound().build()
+            val updatedPost = blogPostService.updatePost(id, request.applyTo(existingPost))
             ResponseEntity.ok(updatedPost)
         } catch (e: RuntimeException) {
             ResponseEntity.notFound().build()

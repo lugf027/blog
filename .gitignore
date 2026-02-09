@@ -44,3 +44,4 @@ uploads/
 
 # Local configuration (contains sensitive data)
 local.properties
+/frontend/node_modules/
