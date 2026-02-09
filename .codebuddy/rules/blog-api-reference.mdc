@@ -86,7 +86,7 @@ Authorization: Bearer <token>
       "title": "文章标题",
       "content": "文章内容...",
       "summary": "文章摘要",
-      "coverImage": "/api/images/cover.jpg",
+      "coverImage": "/api/images/1/cover.jpg",
       "author": "作者",
       "status": "published",
       "viewCount": 100,
@@ -132,7 +132,7 @@ Content-Type: application/json
   "title": "文章标题",
   "content": "文章内容 (支持 Markdown)",
   "summary": "文章摘要",
-  "coverImage": "/api/images/cover.jpg",
+  "coverImage": "/api/images/1/cover.jpg",
   "author": "作者名",
   "status": "draft"  // draft 或 published
 }
@@ -149,7 +149,7 @@ Content-Type: application/json
   "title": "更新后的标题",
   "content": "更新后的内容",
   "summary": "更新后的摘要",
-  "coverImage": "/api/images/new-cover.jpg",
+  "coverImage": "/api/images/1/new-cover.jpg",
   "author": "作者"
 }
 ```
@@ -179,6 +179,8 @@ Authorization: Bearer <token>
 
 ## 图片模块 (`/api`)
 
+> 图片资源按文章ID聚合存储，路径格式为 `/api/images/{postId}/{filename}`
+
 ### 上传图片 (需要 ADMIN 权限)
 
 ```http
@@ -187,25 +189,77 @@ Authorization: Bearer <token>
 Content-Type: multipart/form-data
 
 file: <图片文件>
+postId: <文章ID>
 ```
 
 **响应**:
 ```json
 {
-  "url": "/api/images/abc123.jpg",
-  "fileName": "abc123.jpg",
-  "originalName": "my-image.jpg",
-  "size": 102400
+  "success": true,
+  "url": "/api/images/1/abc123.jpg",
+  "id": 1
 }
 ```
 
 **支持格式**: jpg, jpeg, png, gif, webp
 **大小限制**: 10MB
 
+### 从 URL 上传图片 (需要 ADMIN 权限)
+
+```http
+POST /api/upload/from-url
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "url": "https://example.com/image.jpg",
+  "postId": 1
+}
+```
+
+**响应**:
+```json
+{
+  "success": true,
+  "url": "/api/images/1/abc123.jpg",
+  "id": 1,
+  "originalUrl": "https://example.com/image.jpg"
+}
+```
+
+### 批量从 URL 上传图片 (需要 ADMIN 权限)
+
+```http
+POST /api/upload/from-urls
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "urls": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"],
+  "postId": 1
+}
+```
+
+**响应**:
+```json
+{
+  "success": true,
+  "mappings": {
+    "https://example.com/image1.jpg": "/api/images/1/abc123.jpg",
+    "https://example.com/image2.jpg": "/api/images/1/def456.jpg"
+  },
+  "failed": [],
+  "total": 2,
+  "uploaded": 2
+}
+```
+
+**限制**: 单次最多上传 20 张图片
+
 ### 获取图片 (公开)
 
 ```http
-GET /api/images/{filename}
+GET /api/images/{postId}/{filename}
 ```
 
 ---
@@ -311,8 +365,18 @@ const newPost = await blogApi.createPost({
   status: 'draft'
 })
 
-// 上传图片
+// 上传图片（需要文章ID）
 const file = event.target.files[0]
-const result = await blogApi.uploadImage(file)
-console.log('图片 URL:', result.data.url)
+const postId = newPost.data.id
+const result = await blogApi.uploadImage(file, postId)
+console.log('图片 URL:', result.data.url)  // 输出: /api/images/{postId}/xxx.jpg
+
+// 从 URL 上传图片
+const urlResult = await blogApi.uploadImageFromUrl('https://example.com/image.jpg', postId)
+
+// 批量从 URL 上传图片
+const batchResult = await blogApi.uploadImagesFromUrls([
+  'https://example.com/image1.jpg',
+  'https://example.com/image2.jpg'
+], postId)
 ```

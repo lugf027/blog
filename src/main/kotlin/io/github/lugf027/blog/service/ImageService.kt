@@ -56,6 +56,14 @@ class ImageService(
     }
     
     /**
+     * 获取指定文章的图片存储目录路径
+     * @param postId 文章ID
+     */
+    private fun getPostImageDirPath(postId: Long): String {
+        return "${getUploadDirPath()}$postId/"
+    }
+    
+    /**
      * 通过文件头魔数验证图片有效性，并返回检测到的图片类型
      * @param imageBytes 图片字节数组
      * @return 图片类型 (如 "image/jpeg") 或 null 如果不是有效图片
@@ -173,8 +181,8 @@ class ImageService(
         }
     }
 
-    fun uploadImage(file: MultipartFile): BlogImage {
-        val dirPath = getUploadDirPath()
+    fun uploadImage(file: MultipartFile, postId: Long): BlogImage {
+        val dirPath = getPostImageDirPath(postId)
         
         // Create upload directory if not exists
         val directory = File(dirPath)
@@ -194,7 +202,7 @@ class ImageService(
         // Save to database
         val image = BlogImage(
             fileName = originalFilename,
-            filePath = "/api/images/$filename",
+            filePath = "/api/images/$postId/$filename",
             fileSize = file.size,
             contentType = file.contentType
         )
@@ -205,10 +213,11 @@ class ImageService(
     /**
      * 从 URL 下载图片并保存到服务器
      * @param imageUrl 图片 URL
+     * @param postId 文章ID
      * @return 保存后的 BlogImage 实体
      */
-    fun uploadImageFromUrl(imageUrl: String): BlogImage {
-        val dirPath = getUploadDirPath()
+    fun uploadImageFromUrl(imageUrl: String, postId: Long): BlogImage {
+        val dirPath = getPostImageDirPath(postId)
         
         // 验证 URL 格式
         val uri = try {
@@ -283,7 +292,7 @@ class ImageService(
         // 保存到数据库
         val image = BlogImage(
             fileName = originalFilename,
-            filePath = "/api/images/$filename",
+            filePath = "/api/images/$postId/$filename",
             fileSize = imageBytes.size.toLong(),
             contentType = detectedType
         )
@@ -294,6 +303,7 @@ class ImageService(
     /**
      * 批量从 URL 下载图片
      * @param imageUrls 图片 URL 列表
+     * @param postId 文章ID
      * @return UploadResult 包含成功的映射和失败的URL列表
      */
     data class BatchUploadResult(
@@ -301,12 +311,12 @@ class ImageService(
         val failed: MutableList<String> = mutableListOf()
     )
     
-    fun uploadImagesFromUrls(imageUrls: List<String>): BatchUploadResult {
+    fun uploadImagesFromUrls(imageUrls: List<String>, postId: Long): BatchUploadResult {
         val result = BatchUploadResult()
         
         for (url in imageUrls) {
             try {
-                val image = uploadImageFromUrl(url)
+                val image = uploadImageFromUrl(url, postId)
                 result.mappings[url] = image.filePath
             } catch (e: Exception) {
                 // 记录失败的 URL，让前端可以尝试下载
@@ -356,8 +366,8 @@ class ImageService(
         return filename.split("?")[0].split("#")[0].ifEmpty { null }
     }
 
-    fun getImage(filename: String): ByteArray {
-        val dirPath = getUploadDirPath()
+    fun getImage(postId: Long, filename: String): ByteArray {
+        val dirPath = getPostImageDirPath(postId)
         val filePath = Paths.get(dirPath + filename)
         return Files.readAllBytes(filePath)
     }

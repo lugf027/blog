@@ -1,7 +1,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json'
@@ -200,9 +200,10 @@ export const blogApi = {
   },
 
   // Upload image
-  uploadImage(file: File) {
+  uploadImage(file: File, postId: number) {
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('postId', postId.toString())
     return api.post<{ success: boolean; url: string; id: number }>('/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
@@ -211,18 +212,18 @@ export const blogApi = {
   },
 
   // Upload image from URL (download remote image and save to our server)
-  uploadImageFromUrl(url: string) {
-    return api.post<{ success: boolean; url: string; id: number; originalUrl: string }>('/upload/from-url', { url })
+  uploadImageFromUrl(url: string, postId: number) {
+    return api.post<{ success: boolean; url: string; id: number; originalUrl: string }>('/upload/from-url', { url, postId })
   },
 
   // Upload multiple images from URLs
-  uploadImagesFromUrls(urls: string[]) {
+  uploadImagesFromUrls(urls: string[], postId: number) {
     return api.post<{ 
       success: boolean; 
       mappings: Record<string, string>;  // 原URL -> 新URL 的映射
       failed: string[];  // 后端下载失败的 URL 列表
       total: number;
       uploaded: number;
-    }>('/upload/from-urls', { urls })
+    }>('/upload/from-urls', { urls, postId })
   }
 }

@@ -16,9 +16,12 @@ class ImageController(
     private val imageService: ImageService
 ) {
     @PostMapping("/upload")
-    fun uploadImage(@RequestParam("file") file: MultipartFile): ResponseEntity<Map<String, Any>> {
+    fun uploadImage(
+        @RequestParam("file") file: MultipartFile,
+        @RequestParam("postId") postId: Long
+    ): ResponseEntity<Map<String, Any>> {
         return try {
-            val image = imageService.uploadImage(file)
+            val image = imageService.uploadImage(file, postId)
             val response = mapOf(
                 "success" to true,
                 "url" to image.filePath,
@@ -36,16 +39,19 @@ class ImageController(
     
     /**
      * 从 URL 下载图片并上传到服务器
-     * 请求体: { "url": "https://example.com/image.jpg" }
+     * 请求体: { "url": "https://example.com/image.jpg", "postId": 123 }
      */
     @PostMapping("/upload/from-url")
-    fun uploadImageFromUrl(@RequestBody request: Map<String, String>): ResponseEntity<Map<String, Any>> {
-        val imageUrl = request["url"] ?: return ResponseEntity.badRequest().body(
+    fun uploadImageFromUrl(@RequestBody request: Map<String, Any>): ResponseEntity<Map<String, Any>> {
+        val imageUrl = request["url"] as? String ?: return ResponseEntity.badRequest().body(
             mapOf("success" to false, "message" to "缺少 url 参数")
+        )
+        val postId = (request["postId"] as? Number)?.toLong() ?: return ResponseEntity.badRequest().body(
+            mapOf("success" to false, "message" to "缺少 postId 参数")
         )
         
         return try {
-            val image = imageService.uploadImageFromUrl(imageUrl)
+            val image = imageService.uploadImageFromUrl(imageUrl, postId)
             val response = mapOf(
                 "success" to true,
                 "url" to image.filePath,
@@ -70,12 +76,16 @@ class ImageController(
     
     /**
      * 批量从 URL 下载图片并上传到服务器
-     * 请求体: { "urls": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"] }
+     * 请求体: { "urls": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"], "postId": 123 }
      */
     @PostMapping("/upload/from-urls")
-    fun uploadImagesFromUrls(@RequestBody request: Map<String, List<String>>): ResponseEntity<Map<String, Any>> {
-        val imageUrls = request["urls"] ?: return ResponseEntity.badRequest().body(
+    fun uploadImagesFromUrls(@RequestBody request: Map<String, Any>): ResponseEntity<Map<String, Any>> {
+        @Suppress("UNCHECKED_CAST")
+        val imageUrls = request["urls"] as? List<String> ?: return ResponseEntity.badRequest().body(
             mapOf("success" to false, "message" to "缺少 urls 参数")
+        )
+        val postId = (request["postId"] as? Number)?.toLong() ?: return ResponseEntity.badRequest().body(
+            mapOf("success" to false, "message" to "缺少 postId 参数")
         )
         
         if (imageUrls.isEmpty()) {
@@ -92,7 +102,7 @@ class ImageController(
         }
         
         return try {
-            val result = imageService.uploadImagesFromUrls(imageUrls)
+            val result = imageService.uploadImagesFromUrls(imageUrls, postId)
             val response = mapOf(
                 "success" to true,
                 "mappings" to result.mappings,
@@ -110,10 +120,13 @@ class ImageController(
         }
     }
 
-    @GetMapping("/images/{filename}")
-    fun getImage(@PathVariable filename: String): ResponseEntity<ByteArray> {
+    @GetMapping("/images/{postId}/{filename}")
+    fun getImage(
+        @PathVariable postId: Long,
+        @PathVariable filename: String
+    ): ResponseEntity<ByteArray> {
         return try {
-            val image = imageService.getImage(filename)
+            val image = imageService.getImage(postId, filename)
             val headers = HttpHeaders()
             
             // Determine content type based on file extension

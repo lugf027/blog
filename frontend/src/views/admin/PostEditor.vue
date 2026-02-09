@@ -135,6 +135,9 @@ const form = ref<BlogPost>({
   status: 'draft'
 })
 
+// 当前文章ID（编辑时有值，新建时需要先保存获取）
+const currentPostId = ref<number | null>(null)
+
 const isEdit = computed(() => !!route.params.id)
 
 // Configure marked with highlight.js
@@ -163,6 +166,7 @@ const loadPost = async () => {
   try {
     const { data } = await blogApi.getPostById(id)
     form.value = data
+    currentPostId.value = id  // 设置当前文章ID
   } catch (error) {
     ElMessage.error('加载文章失败')
   }
@@ -204,9 +208,42 @@ const handleImageUpload = (file: File) => {
   return true
 }
 
-const uploadImage = async ({ file }: any) => {
+/**
+ * 确保文章已保存并获取ID
+ * 如果是新文章，会先自动保存为草稿
+ */
+const ensurePostId = async (): Promise<number | null> => {
+  // 如果已有文章ID，直接返回
+  if (currentPostId.value) {
+    return currentPostId.value
+  }
+  
+  // 新文章需要先保存
+  if (!form.value.title) {
+    ElMessage.warning('请先输入文章标题后再上传图片')
+    return null
+  }
+  
   try {
-    const { data } = await blogApi.uploadImage(file)
+    form.value.status = 'draft'
+    const { data } = await blogApi.createPost(form.value)
+    currentPostId.value = data.id!
+    // 更新 URL 到编辑模式
+    router.replace(`/admin/edit/${data.id}`)
+    ElMessage.success('文章已自动保存为草稿')
+    return currentPostId.value
+  } catch (error) {
+    ElMessage.error('自动保存文章失败')
+    return null
+  }
+}
+
+const uploadImage = async ({ file }: any) => {
+  const postId = await ensurePostId()
+  if (!postId) return
+  
+  try {
+    const { data } = await blogApi.uploadImage(file, postId)
     if (data.success) {
       const imageMarkdown = `![图片](${data.url})`
       const textarea = editorRef.value?.textarea
@@ -245,8 +282,11 @@ const handleCoverUpload = (file: File) => {
 }
 
 const uploadCoverImage = async ({ file }: any) => {
+  const postId = await ensurePostId()
+  if (!postId) return
+  
   try {
-    const { data } = await blogApi.uploadImage(file)
+    const { data } = await blogApi.uploadImage(file, postId)
     if (data.success) {
       form.value.coverImage = data.url
       ElMessage.success('封面上传成功')
@@ -472,7 +512,7 @@ const validateImageIntegrity = (buffer: ArrayBuffer, imageType: string): boolean
  * 前端下载图片并上传到服务器
  * 用于后端下载失败时的降级方案
  */
-const downloadAndUploadImage = async (url: string): Promise<string | null> => {
+const downloadAndUploadImage = async (url: string, postId: number): Promise<string | null> => {
   try {
     // 使用 fetch 在前端下载图片
     const response = await fetch(url, {
@@ -521,7 +561,7 @@ const downloadAndUploadImage = async (url: string): Promise<string | null> => {
     const file = new File([blob], filename, { type: detectedType })
     
     // 上传到服务器
-    const { data } = await blogApi.uploadImage(file)
+    const { data } = await blogApi.uploadImage(file, postId)
     
     if (data.success) {
       return data.url
@@ -537,7 +577,7 @@ const downloadAndUploadImage = async (url: string): Promise<string | null> => {
 /**
  * 批量在前端下载并上传图片
  */
-const downloadAndUploadImages = async (urls: string[]): Promise<Record<string, string>> => {
+const downloadAndUploadImages = async (urls: string[], postId: number): Promise<Record<string, string>> => {
   const mappings: Record<string, string> = {}
   
   // 并发下载，但限制同时进行的数量
@@ -550,7 +590,7 @@ const downloadAndUploadImages = async (urls: string[]): Promise<Record<string, s
   for (const chunk of chunks) {
     const results = await Promise.all(
       chunk.map(async (url) => {
-        const newUrl = await downloadAndUploadImage(url)
+        const newUrl = await downloadAndUploadImage(url, postId)
         return { url, newUrl }
       })
     )
@@ -592,6 +632,9 @@ const getImageFilesFromClipboard = (clipboardData: DataTransfer | null): File[] 
 const uploadClipboardImages = async (files: File[]): Promise<void> => {
   if (files.length === 0) return
   
+  const postId = await ensurePostId()
+  if (!postId) return
+  
   uploadingImages.value = true
   
   ElNotification({
@@ -624,7 +667,7 @@ const uploadClipboardImages = async (files: File[]): Promise<void> => {
             return null
           }
           
-          const { data } = await blogApi.uploadImage(file)
+          const { data } = await blogApi.uploadImage(file, postId)
           if (data.success) {
             return data.url
           }
@@ -707,6 +750,10 @@ const handlePaste = async (event: ClipboardEvent) => {
   
   if (imageUrls.length === 0) return
   
+  // 确保有文章ID
+  const postId = await ensurePostId()
+  if (!postId) return
+  
   // 显示检测到的图片数量提示
   ElNotification({
     title: '检测到外部图片',
@@ -719,7 +766,7 @@ const handlePaste = async (event: ClipboardEvent) => {
   
   try {
     // 第一步：尝试后端批量上传
-    const { data } = await blogApi.uploadImagesFromUrls(imageUrls)
+    const { data } = await blogApi.uploadImagesFromUrls(imageUrls, postId)
     
     let finalMappings: Record<string, string> = {}
     let failedUrls: string[] = []
@@ -738,7 +785,7 @@ const handlePaste = async (event: ClipboardEvent) => {
         duration: 3000
       })
       
-      const frontendMappings = await downloadAndUploadImages(failedUrls)
+      const frontendMappings = await downloadAndUploadImages(failedUrls, postId)
       
       // 合并前端上传的结果
       for (const [url, newUrl] of Object.entries(frontendMappings)) {
