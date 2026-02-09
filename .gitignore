@@ -38,3 +38,9 @@ out/
 
 ### Kotlin ###
 .kotlin
+
+# Uploads
+uploads/
+
+# Local configuration (contains sensitive data)
+local.properties
