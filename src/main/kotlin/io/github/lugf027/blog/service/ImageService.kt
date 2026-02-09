@@ -2,6 +2,7 @@ package io.github.lugf027.blog.service
 
 import io.github.lugf027.blog.entity.BlogImage
 import io.github.lugf027.blog.repository.BlogImageRepository
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import java.io.File
@@ -16,10 +17,10 @@ import java.util.*
 
 @Service
 class ImageService(
-    private val blogImageRepository: BlogImageRepository
+    private val blogImageRepository: BlogImageRepository,
+    @Value("\${upload.image.path:uploads/images/}")
+    private val uploadDir: String
 ) {
-    private val uploadDir = "uploads/images/"
-    
     // 支持的图片扩展名
     private val supportedExtensions = listOf(".jpg", ".jpeg", ".png", ".gif", ".webp")
     
@@ -42,6 +43,17 @@ class ImageService(
     private val gifMagic = byteArrayOf(0x47, 0x49, 0x46, 0x38)  // GIF8
     private val webpRiffMagic = byteArrayOf(0x52, 0x49, 0x46, 0x46)  // RIFF
     private val webpWebpMagic = byteArrayOf(0x57, 0x45, 0x42, 0x50)  // WEBP
+    
+    /**
+     * 获取规范化的上传目录路径（确保以 / 结尾）
+     */
+    private fun getUploadDirPath(): String {
+        return if (uploadDir.endsWith("/") || uploadDir.endsWith("\\")) {
+            uploadDir
+        } else {
+            "$uploadDir/"
+        }
+    }
     
     /**
      * 通过文件头魔数验证图片有效性，并返回检测到的图片类型
@@ -162,8 +174,10 @@ class ImageService(
     }
 
     fun uploadImage(file: MultipartFile): BlogImage {
+        val dirPath = getUploadDirPath()
+        
         // Create upload directory if not exists
-        val directory = File(uploadDir)
+        val directory = File(dirPath)
         if (!directory.exists()) {
             directory.mkdirs()
         }
@@ -174,7 +188,7 @@ class ImageService(
         val filename = "${UUID.randomUUID()}$extension"
         
         // Save file
-        val filePath = Paths.get(uploadDir + filename)
+        val filePath = Paths.get(dirPath + filename)
         Files.write(filePath, file.bytes)
 
         // Save to database
@@ -194,6 +208,8 @@ class ImageService(
      * @return 保存后的 BlogImage 实体
      */
     fun uploadImageFromUrl(imageUrl: String): BlogImage {
+        val dirPath = getUploadDirPath()
+        
         // 验证 URL 格式
         val uri = try {
             URI.create(imageUrl)
@@ -207,7 +223,7 @@ class ImageService(
         }
         
         // Create upload directory if not exists
-        val directory = File(uploadDir)
+        val directory = File(dirPath)
         if (!directory.exists()) {
             directory.mkdirs()
         }
@@ -258,7 +274,7 @@ class ImageService(
         val filename = "${UUID.randomUUID()}$extension"
         
         // 保存文件
-        val filePath = Paths.get(uploadDir + filename)
+        val filePath = Paths.get(dirPath + filename)
         Files.write(filePath, imageBytes)
         
         // 从 URL 中提取原始文件名
@@ -341,7 +357,8 @@ class ImageService(
     }
 
     fun getImage(filename: String): ByteArray {
-        val filePath = Paths.get(uploadDir + filename)
+        val dirPath = getUploadDirPath()
+        val filePath = Paths.get(dirPath + filename)
         return Files.readAllBytes(filePath)
     }
 }

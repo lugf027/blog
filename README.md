@@ -30,7 +30,13 @@
   - 未登录自动跳转到登录页
   - Token过期自动退出
 - 📋 文章列表管理
-- ✏️ Markdown编辑器（实时预览）
+- ✏️ **Markdown编辑器**（实时预览）
+  - 📋 **智能粘贴功能**：
+    - 粘贴剪切板图片（如截图）自动上传
+    - 粘贴包含外部图片链接的 Markdown 文本时自动下载并替换为本站链接
+    - 自动跳过已是本站的图片链接
+    - 后端下载失败时自动尝试前端下载（支持需要登录的网站）
+    - 图片有效性验证（通过文件头魔数检测，防止下载损坏文件）
 - 🖼️ 图片上传功能
 - 📤 文章发布/草稿管理
 - 🗑️ 文章删除功能
@@ -112,7 +118,11 @@
 │       │   │   └── JwtUtil.kt
 │       │   └── BlogApplication.kt
 │       └── resources/
-│           └── application.yml
+│           ├── application.yaml           # 主配置（仅指定激活环境）
+│           ├── application-example.yaml   # 示例配置（模板）
+│           ├── application-imac.yaml      # iMac 开发环境配置
+│           ├── application-macbook.yaml   # MacBook 开发环境配置
+│           └── application-prod.yaml      # 生产环境配置
 │
 ├── build.gradle.kts          # Gradle配置
 ├── settings.gradle.kts
@@ -137,7 +147,7 @@ npm run dev
 ### 后端开发
 
 1. 确保MySQL数据库已启动
-2. 配置数据库连接（通过环境变量或修改application.yml）
+2. 配置环境（见下方"环境配置"部分）
 3. 运行Spring Boot应用
 
 ```bash
@@ -146,15 +156,77 @@ npm run dev
 
 后端将运行在 http://localhost:8080
 
-### 环境变量
+### 环境配置
 
-后端需要以下环境变量：
+项目使用 Spring Boot 的多环境配置机制，配置文件位于 `src/main/resources/` 目录下：
 
-- `DB_HOST`: 数据库主机地址（默认：11.142.154.110）
-- `DB_PORT`: 数据库端口（默认：3306）
-- `DB_NAME`: 数据库名称（默认：n6q4bxul）
-- `DB_USERNAME`: 数据库用户名（默认：with_jxkywmtimbgeuddj）
-- `DB_PASSWORD`: 数据库密码（默认：L^Ytk5H%ioxFz9）
+| 配置文件 | 用途 | 是否提交到 Git |
+|---------|------|---------------|
+| `application.yaml` | 主配置，仅指定激活的环境 | ✅ 是 |
+| `application-example.yaml` | 示例配置模板 | ✅ 是 |
+| `application-imac.yaml` | iMac 开发环境 | ❌ 否（已在 .gitignore） |
+| `application-macbook.yaml` | MacBook 开发环境 | ❌ 否（已在 .gitignore） |
+| `application-prod.yaml` | 生产环境 | ❌ 否（已在 .gitignore） |
+
+#### 配置步骤
+
+1. 复制 `application-example.yaml` 为你需要的环境配置文件（如 `application-imac.yaml`）
+2. 修改配置文件中的数据库连接信息和图片上传路径
+3. 修改 `application.yaml` 中的 `spring.profiles.active` 或使用环境变量指定环境
+
+#### 切换环境的方式
+
+**方式一：修改 application.yaml**
+```yaml
+spring:
+  profiles:
+    active: imac  # 可选: example, imac, macbook, prod
+```
+
+**方式二：运行时指定**
+```bash
+# Gradle 命令行参数
+./gradlew bootRun --args='--spring.profiles.active=imac'
+
+# 或设置环境变量
+export SPRING_PROFILES_ACTIVE=imac
+./gradlew bootRun
+```
+
+**方式三：IDE 配置**
+
+在 IntelliJ IDEA 的 Run Configuration 中设置 VM options:
+```
+-Dspring.profiles.active=imac
+```
+
+#### 配置项说明
+
+每个环境配置文件包含以下配置项：
+
+```yaml
+server:
+  port: 8080                    # 服务端口
+
+spring:
+  datasource:
+    url: jdbc:mysql://...       # 数据库连接URL
+    username: root              # 数据库用户名
+    password: xxx               # 数据库密码
+  jpa:
+    hibernate:
+      ddl-auto: update          # 自动建表策略
+    show-sql: true              # 是否打印SQL
+
+upload:
+  image:
+    path: uploads/images/       # 图片上传保存路径（相对或绝对路径）
+
+logging:
+  level:
+    root: INFO
+    io.github.lugf027.blog: DEBUG
+```
 
 ### 数据库表结构
 
@@ -220,7 +292,9 @@ curl -X POST http://localhost:8080/api/auth/register \
 
 ### 图片接口
 
-- `POST /api/upload` - 上传图片
+- `POST /api/upload` - 上传图片 🔒
+- `POST /api/upload/from-url` - 从URL下载图片并上传 🔒
+- `POST /api/upload/from-urls` - 批量从URL下载图片并上传 🔒
 - `GET /api/images/{filename}` - 获取图片
 
 ### 访问日志接口 🔒
@@ -303,13 +377,10 @@ curl -X POST http://localhost:8080/api/auth/register \
 ./gradlew bootJar
 docker build -t blog-backend .
 
-# 运行容器
+# 运行容器（指定环境）
 docker run -d -p 8080:8080 \
-  -e DB_HOST=your_db_host \
-  -e DB_PORT=3306 \
-  -e DB_NAME=your_db_name \
-  -e DB_USERNAME=your_username \
-  -e DB_PASSWORD=your_password \
+  -e SPRING_PROFILES_ACTIVE=prod \
+  -v /var/www/blog/uploads:/app/uploads \
   blog-backend
 ```
 
@@ -342,6 +413,12 @@ npm run build
 8. ✅ **Markdown支持**：完整的Markdown编辑和渲染
 9. ✅ **图片上传**：支持图片上传和管理
 10. ✅ **多管理员支持**：可创建多个管理员账号
+11. ✅ **智能图片粘贴**：
+    - 剪切板图片自动上传
+    - 外部图片链接自动下载替换
+    - 图片有效性验证（文件头魔数检测）
+    - 前后端双重下载降级机制
+12. ✅ **多环境配置**：支持 example/imac/macbook/prod 多环境切换
 
 ## 许可证
 

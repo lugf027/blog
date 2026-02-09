@@ -43,5 +43,13 @@ out/
 uploads/
 
 # Local configuration (contains sensitive data)
-local.properties
-/frontend/node_modules/
+# 环境配置文件（包含敏感信息，不要提交到仓库）
+# application-example.yaml 是示例模板，可以提交
+application-imac.yaml
+application-macbook.yaml
+application-prod.yaml
+src/main/resources/application-imac.yaml
+src/main/resources/application-macbook.yaml
+src/main/resources/application-prod.yaml
+
+frontend/node_modules/

@@ -1,13 +1,3 @@
-import java.util.Properties
-import java.io.FileInputStream
-
-// Load local.properties if exists
-val localProperties = Properties()
-val localPropertiesFile = rootProject.file("local.properties")
-if (localPropertiesFile.exists()) {
-    localProperties.load(FileInputStream(localPropertiesFile))
-}
-
 plugins {
     kotlin("jvm") version "2.2.21"
     kotlin("plugin.spring") version "2.2.21"
@@ -62,15 +52,4 @@ kotlin {
 
 tasks.withType<Test> {
     useJUnitPlatform()
-}
-
-// Configure bootRun task to use local.properties
-tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
-    if (localProperties.isNotEmpty()) {
-        environment("DB_HOST", localProperties.getProperty("db.host", "localhost"))
-        environment("DB_PORT", localProperties.getProperty("db.port", "3306"))
-        environment("DB_NAME", localProperties.getProperty("db.name", "blog"))
-        environment("DB_USERNAME", localProperties.getProperty("db.username", "root"))
-        environment("DB_PASSWORD", localProperties.getProperty("db.password", ""))
-    }
 }
