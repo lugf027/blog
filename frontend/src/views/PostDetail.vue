@@ -55,22 +55,25 @@ import { useRouter, useRoute } from 'vue-router'
 import { blogApi, type BlogPost } from '@/api/blog'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
+import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
-import 'highlight.js/styles/github.css'
+import 'highlight.js/styles/github-dark.css'
 
 const router = useRouter()
 const route = useRoute()
 const post = ref<BlogPost | null>(null)
 const loading = ref(false)
 
-// Configure marked
-marked.setOptions({
-  highlight: function(code, lang) {
-    if (lang && hljs.getLanguage(lang)) {
-      return hljs.highlight(code, { language: lang }).value
-    }
-    return hljs.highlightAuto(code).value
-  },
+// Configure marked with highlight.js
+marked.use(markedHighlight({
+  langPrefix: 'hljs language-',
+  highlight(code, lang) {
+    const language = hljs.getLanguage(lang) ? lang : 'plaintext'
+    return hljs.highlight(code, { language }).value
+  }
+}))
+
+marked.use({
   breaks: true,
   gfm: true
 })
@@ -254,24 +257,28 @@ onMounted(() => {
 }
 
 .markdown-body code {
-  background-color: #f6f8fa;
+  background-color: rgba(175, 184, 193, 0.2);
   padding: 2px 6px;
   border-radius: 3px;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 0.9em;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.85em;
 }
 
 .markdown-body pre {
-  background-color: #f6f8fa;
+  background-color: #0d1117;
   padding: 16px;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow-x: auto;
   margin-bottom: 16px;
+  line-height: 1.45;
 }
 
 .markdown-body pre code {
   background-color: transparent;
   padding: 0;
+  font-size: 0.85em;
+  line-height: 1.45;
+  color: #c9d1d9;
 }
 
 .markdown-body blockquote {
