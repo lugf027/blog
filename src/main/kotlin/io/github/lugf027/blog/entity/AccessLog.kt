@@ -8,29 +8,36 @@ import java.time.LocalDateTime
 data class AccessLog(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    val id: Long? = null,
+    var id: Long? = null,
 
     @Column(nullable = false, length = 100)
-    val ipAddress: String,
+    var ipAddress: String = "",
 
     @Column(nullable = false, length = 500)
-    val requestUrl: String,
+    var requestUrl: String = "",
 
     @Column(length = 10)
-    val requestMethod: String? = null,
+    var requestMethod: String? = null,
 
     @Column(length = 500)
-    val userAgent: String? = null,
+    var userAgent: String? = null,
 
     @Column(length = 500)
-    val referer: String? = null,
+    var referer: String? = null,
 
     @Column(name = "access_time", nullable = false)
-    val accessTime: LocalDateTime = LocalDateTime.now(),
+    var accessTime: LocalDateTime? = null,
 
     @Column(name = "response_status")
-    val responseStatus: Int? = null,
+    var responseStatus: Int? = null,
 
     @Column(name = "response_time")
-    val responseTime: Long? = null
-)
+    var responseTime: Long? = null
+) {
+    @PrePersist
+    protected fun onCreate() {
+        if (accessTime == null) {
+            accessTime = LocalDateTime.now()
+        }
+    }
+}

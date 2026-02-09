@@ -8,26 +8,33 @@ import java.time.LocalDateTime
 data class AdminUser(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    val id: Long? = null,
+    var id: Long? = null,
 
     @Column(nullable = false, unique = true, length = 50)
-    val username: String,
+    var username: String = "",
 
     @Column(nullable = false, length = 100)
-    val password: String,
+    var password: String = "",
 
     @Column(length = 50)
-    val nickname: String? = null,
+    var nickname: String? = null,
 
     @Column(length = 100)
-    val email: String? = null,
+    var email: String? = null,
 
     @Column(nullable = false)
-    val enabled: Boolean = true,
+    var enabled: Boolean = true,
 
     @Column(name = "created_at", updatable = false)
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    var createdAt: LocalDateTime? = null,
 
     @Column(name = "last_login_at")
     var lastLoginAt: LocalDateTime? = null
-)
+) {
+    @PrePersist
+    protected fun onCreate() {
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now()
+        }
+    }
+}
