@@ -31,6 +31,135 @@ class ImageService(
         "image/gif" to ".gif",
         "image/webp" to ".webp"
     )
+    
+    // 图片文件头魔数（Magic Number）
+    // JPEG: FF D8 FF
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    // GIF: 47 49 46 38 (GIF8)
+    // WebP: 52 49 46 46 ... 57 45 42 50 (RIFF...WEBP)
+    private val jpegMagic = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
+    private val pngMagic = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    private val gifMagic = byteArrayOf(0x47, 0x49, 0x46, 0x38)  // GIF8
+    private val webpRiffMagic = byteArrayOf(0x52, 0x49, 0x46, 0x46)  // RIFF
+    private val webpWebpMagic = byteArrayOf(0x57, 0x45, 0x42, 0x50)  // WEBP
+    
+    /**
+     * 通过文件头魔数验证图片有效性，并返回检测到的图片类型
+     * @param imageBytes 图片字节数组
+     * @return 图片类型 (如 "image/jpeg") 或 null 如果不是有效图片
+     */
+    private fun detectImageType(imageBytes: ByteArray): String? {
+        if (imageBytes.size < 12) return null
+        
+        // 检查 JPEG
+        if (imageBytes.size >= 3 && 
+            imageBytes[0] == jpegMagic[0] && 
+            imageBytes[1] == jpegMagic[1] && 
+            imageBytes[2] == jpegMagic[2]) {
+            return "image/jpeg"
+        }
+        
+        // 检查 PNG
+        if (imageBytes.size >= 8) {
+            var isPng = true
+            for (i in pngMagic.indices) {
+                if (imageBytes[i] != pngMagic[i]) {
+                    isPng = false
+                    break
+                }
+            }
+            if (isPng) return "image/png"
+        }
+        
+        // 检查 GIF
+        if (imageBytes.size >= 4) {
+            var isGif = true
+            for (i in gifMagic.indices) {
+                if (imageBytes[i] != gifMagic[i]) {
+                    isGif = false
+                    break
+                }
+            }
+            if (isGif) return "image/gif"
+        }
+        
+        // 检查 WebP (RIFF....WEBP)
+        if (imageBytes.size >= 12) {
+            var isRiff = true
+            for (i in webpRiffMagic.indices) {
+                if (imageBytes[i] != webpRiffMagic[i]) {
+                    isRiff = false
+                    break
+                }
+            }
+            if (isRiff) {
+                var isWebp = true
+                for (i in webpWebpMagic.indices) {
+                    if (imageBytes[8 + i] != webpWebpMagic[i]) {
+                        isWebp = false
+                        break
+                    }
+                }
+                if (isWebp) return "image/webp"
+            }
+        }
+        
+        return null
+    }
+    
+    /**
+     * 验证图片是否完整有效
+     * @param imageBytes 图片字节数组
+     * @param imageType 图片类型
+     * @return true 如果图片有效
+     */
+    private fun validateImageIntegrity(imageBytes: ByteArray, imageType: String): Boolean {
+        // 基本大小检查
+        if (imageBytes.size < 100) return false
+        
+        when (imageType) {
+            "image/jpeg" -> {
+                // JPEG 文件应该以 FF D9 结尾（EOI marker）
+                if (imageBytes.size >= 2) {
+                    val lastTwo = imageBytes.takeLast(2)
+                    if (lastTwo[0] == 0xFF.toByte() && lastTwo[1] == 0xD9.toByte()) {
+                        return true
+                    }
+                    // 有些 JPEG 文件可能在 EOI 后面有额外数据，向前查找
+                    for (i in imageBytes.size - 2 downTo maxOf(0, imageBytes.size - 100)) {
+                        if (imageBytes[i] == 0xFF.toByte() && imageBytes[i + 1] == 0xD9.toByte()) {
+                            return true
+                        }
+                    }
+                }
+                return false
+            }
+            "image/png" -> {
+                // PNG 文件应该以 IEND chunk 结尾: 00 00 00 00 49 45 4E 44 AE 42 60 82
+                if (imageBytes.size >= 12) {
+                    val iendSignature = byteArrayOf(
+                        0x49, 0x45, 0x4E, 0x44,  // IEND
+                        0xAE.toByte(), 0x42, 0x60, 0x82.toByte()  // CRC
+                    )
+                    val lastEight = imageBytes.takeLast(8).toByteArray()
+                    return lastEight.contentEquals(iendSignature)
+                }
+                return false
+            }
+            "image/gif" -> {
+                // GIF 文件应该以 0x3B (;) 结尾
+                if (imageBytes.isNotEmpty()) {
+                    return imageBytes.last() == 0x3B.toByte()
+                }
+                return false
+            }
+            "image/webp" -> {
+                // WebP 只检查魔数，完整性较难验证
+                return imageBytes.size >= 12
+            }
+            else -> return false
+        }
+    }
 
     fun uploadImage(file: MultipartFile): BlogImage {
         // Create upload directory if not exists
@@ -112,22 +241,18 @@ class ImageService(
             throw IllegalArgumentException("图片大小超过 10MB 限制")
         }
         
-        // 获取 Content-Type 并确定扩展名
-        val contentType = response.headers()
-            .firstValue("Content-Type")
-            .orElse("image/jpeg")
-            .split(";")[0]
-            .trim()
-            .lowercase()
+        // 通过文件头魔数检测真实的图片类型
+        val detectedType = detectImageType(imageBytes)
+            ?: throw RuntimeException("下载的内容不是有效的图片文件（无法识别的文件格式）")
         
-        val extension = contentTypeToExtension[contentType] 
-            ?: getExtensionFromUrl(imageUrl) 
-            ?: ".jpg"  // 默认使用 .jpg
-        
-        // 验证是否为支持的图片格式
-        if (extension !in supportedExtensions) {
-            throw IllegalArgumentException("不支持的图片格式: $extension")
+        // 验证图片完整性
+        if (!validateImageIntegrity(imageBytes, detectedType)) {
+            throw RuntimeException("下载的图片文件不完整或已损坏")
         }
+        
+        // 使用检测到的真实图片类型确定扩展名
+        val extension = contentTypeToExtension[detectedType] 
+            ?: throw RuntimeException("不支持的图片类型: $detectedType")
         
         // 生成唯一文件名
         val filename = "${UUID.randomUUID()}$extension"
@@ -144,7 +269,7 @@ class ImageService(
             fileName = originalFilename,
             filePath = "/api/images/$filename",
             fileSize = imageBytes.size.toLong(),
-            contentType = contentType
+            contentType = detectedType
         )
         
         return blogImageRepository.save(image)

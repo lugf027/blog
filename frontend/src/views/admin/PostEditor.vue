@@ -334,6 +334,137 @@ const replaceImageUrls = (text: string, mappings: Record<string, string>): strin
   return result
 }
 
+// ============== 图片文件验证工具函数 ==============
+
+/**
+ * 图片文件头魔数定义
+ */
+const IMAGE_MAGIC_NUMBERS = {
+  jpeg: [0xFF, 0xD8, 0xFF],
+  png: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+  gif: [0x47, 0x49, 0x46, 0x38],  // GIF8
+  webpRiff: [0x52, 0x49, 0x46, 0x46],  // RIFF
+  webpWebp: [0x57, 0x45, 0x42, 0x50]   // WEBP
+}
+
+/**
+ * 通过文件头魔数检测图片类型
+ * @param buffer ArrayBuffer 图片数据
+ * @returns 图片MIME类型或null
+ */
+const detectImageTypeFromBuffer = (buffer: ArrayBuffer): string | null => {
+  const bytes = new Uint8Array(buffer)
+  
+  if (bytes.length < 12) return null
+  
+  // 检查 JPEG: FF D8 FF
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+    return 'image/jpeg'
+  }
+  
+  // 检查 PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (bytes.length >= 8) {
+    const pngMagic = IMAGE_MAGIC_NUMBERS.png
+    let isPng = true
+    for (let i = 0; i < pngMagic.length; i++) {
+      if (bytes[i] !== pngMagic[i]) {
+        isPng = false
+        break
+      }
+    }
+    if (isPng) return 'image/png'
+  }
+  
+  // 检查 GIF: 47 49 46 38
+  if (bytes.length >= 4) {
+    const gifMagic = IMAGE_MAGIC_NUMBERS.gif
+    let isGif = true
+    for (let i = 0; i < gifMagic.length; i++) {
+      if (bytes[i] !== gifMagic[i]) {
+        isGif = false
+        break
+      }
+    }
+    if (isGif) return 'image/gif'
+  }
+  
+  // 检查 WebP: RIFF....WEBP
+  if (bytes.length >= 12) {
+    const riffMagic = IMAGE_MAGIC_NUMBERS.webpRiff
+    const webpMagic = IMAGE_MAGIC_NUMBERS.webpWebp
+    let isRiff = true
+    for (let i = 0; i < riffMagic.length; i++) {
+      if (bytes[i] !== riffMagic[i]) {
+        isRiff = false
+        break
+      }
+    }
+    if (isRiff) {
+      let isWebp = true
+      for (let i = 0; i < webpMagic.length; i++) {
+        if (bytes[8 + i] !== webpMagic[i]) {
+          isWebp = false
+          break
+        }
+      }
+      if (isWebp) return 'image/webp'
+    }
+  }
+  
+  return null
+}
+
+/**
+ * 验证图片完整性
+ * @param buffer ArrayBuffer 图片数据
+ * @param imageType 图片MIME类型
+ * @returns 是否完整
+ */
+const validateImageIntegrity = (buffer: ArrayBuffer, imageType: string): boolean => {
+  const bytes = new Uint8Array(buffer)
+  
+  // 基本大小检查
+  if (bytes.length < 100) return false
+  
+  switch (imageType) {
+    case 'image/jpeg': {
+      // JPEG 文件应该以 FF D9 结尾（EOI marker）
+      // 有些 JPEG 可能在 EOI 后有额外数据，向前查找
+      for (let i = bytes.length - 2; i >= Math.max(0, bytes.length - 100); i--) {
+        if (bytes[i] === 0xFF && bytes[i + 1] === 0xD9) {
+          return true
+        }
+      }
+      return false
+    }
+    case 'image/png': {
+      // PNG 文件应该以 IEND chunk 结尾
+      if (bytes.length >= 8) {
+        const iendSignature = [0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]
+        let isPngEnd = true
+        for (let i = 0; i < 8; i++) {
+          if (bytes[bytes.length - 8 + i] !== iendSignature[i]) {
+            isPngEnd = false
+            break
+          }
+        }
+        return isPngEnd
+      }
+      return false
+    }
+    case 'image/gif': {
+      // GIF 文件应该以 0x3B (;) 结尾
+      return bytes[bytes.length - 1] === 0x3B
+    }
+    case 'image/webp': {
+      // WebP 完整性较难验证，只检查魔数
+      return bytes.length >= 12
+    }
+    default:
+      return false
+  }
+}
+
 /**
  * 前端下载图片并上传到服务器
  * 用于后端下载失败时的降级方案
@@ -351,33 +482,40 @@ const downloadAndUploadImage = async (url: string): Promise<string | null> => {
       return null
     }
     
-    const blob = await response.blob()
+    const arrayBuffer = await response.arrayBuffer()
     
-    // 检查是否为图片
-    if (!blob.type.startsWith('image/')) {
-      console.warn(`下载的内容不是图片: ${url}, type: ${blob.type}`)
+    // 通过文件头魔数检测真实的图片类型（而不是依赖 Content-Type）
+    const detectedType = detectImageTypeFromBuffer(arrayBuffer)
+    if (!detectedType) {
+      console.warn(`下载的内容不是有效的图片文件: ${url}`)
+      return null
+    }
+    
+    // 验证图片完整性
+    if (!validateImageIntegrity(arrayBuffer, detectedType)) {
+      console.warn(`下载的图片文件不完整或已损坏: ${url}`)
       return null
     }
     
     // 检查大小限制
-    if (blob.size > 10 * 1024 * 1024) {
-      console.warn(`图片大小超过限制: ${url}, size: ${blob.size}`)
+    if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+      console.warn(`图片大小超过限制: ${url}, size: ${arrayBuffer.byteLength}`)
       return null
     }
     
-    // 根据 Content-Type 确定文件扩展名
+    // 根据检测到的类型确定文件扩展名
     const extensionMap: Record<string, string> = {
       'image/jpeg': '.jpg',
-      'image/jpg': '.jpg',
       'image/png': '.png',
       'image/gif': '.gif',
       'image/webp': '.webp'
     }
-    const extension = extensionMap[blob.type] || '.jpg'
+    const extension = extensionMap[detectedType] || '.jpg'
     
-    // 创建 File 对象
+    // 创建 Blob 和 File 对象
+    const blob = new Blob([arrayBuffer], { type: detectedType })
     const filename = `image_${Date.now()}${extension}`
-    const file = new File([blob], filename, { type: blob.type })
+    const file = new File([blob], filename, { type: detectedType })
     
     // 上传到服务器
     const { data } = await blogApi.uploadImage(file)
